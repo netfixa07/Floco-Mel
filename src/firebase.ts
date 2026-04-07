@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
+// Version: 1.0.1 - Fixed Vercel build error by removing JSON import
 // Default configuration from firebase-applet-config.json
 const DEFAULT_CONFIG = {
   projectId: "gen-lang-client-0189336729",

@@ -11,7 +11,8 @@ import {
   onAuthStateChanged, 
   signInWithPopup, 
   GoogleAuthProvider, 
-  signOut 
+  signOut,
+  signInWithEmailAndPassword
 } from 'firebase/auth';
 import { 
   doc, 
@@ -59,6 +60,7 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: () => Promise<void>;
+  loginWithEmail: (email: string, pass: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -118,12 +120,16 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
     await signInWithPopup(auth, provider);
   };
 
+  const loginWithEmail = async (email: string, pass: string) => {
+    await signInWithEmailAndPassword(auth, email, pass);
+  };
+
   const logout = async () => {
     await signOut(auth);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, loginWithEmail, logout }}>
       {children}
     </AuthContext.Provider>
   );
@@ -279,7 +285,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 };
 
 const Login: React.FC = () => {
-  const { login } = useAuth();
+  const { loginWithEmail, login } = useAuth();
   const [loginType, setLoginType] = useState<'admin' | 'employee'>('employee');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -289,15 +295,23 @@ const Login: React.FC = () => {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!email || !password) {
+      setError('Por favor, preencha todos os campos.');
+      return;
+    }
     setIsLoggingIn(true);
     setError(null);
     try {
-      // In this environment, we primarily use Google Login for simplicity and security
-      // but we simulate the profile selection logic
-      await login();
-      // The actual role check happens in the AuthProvider's onAuthStateChanged
+      await loginWithEmail(email, password);
     } catch (err: any) {
-      setError('Falha na autenticação. Verifique suas credenciais.');
+      console.error('Login error:', err);
+      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        setError('E-mail ou senha incorretos.');
+      } else if (err.code === 'auth/invalid-email') {
+        setError('E-mail inválido.');
+      } else {
+        setError('Falha na autenticação. Verifique se o login por e-mail está ativado no Firebase.');
+      }
     } finally {
       setIsLoggingIn(false);
     }
@@ -420,19 +434,6 @@ const Login: React.FC = () => {
             )}
           </button>
         </form>
-
-        <div className="relative my-8">
-          <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
-          <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-4 text-slate-300 font-bold tracking-widest">Ou acesse com</span></div>
-        </div>
-
-        <button
-          onClick={login}
-          className="w-full flex items-center justify-center gap-3 bg-white border-2 border-slate-100 hover:border-amber-200 hover:bg-amber-50 py-4 rounded-2xl transition-all duration-300 font-bold text-slate-600 shadow-sm"
-        >
-          <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
-          Google Workspace
-        </button>
       </motion.div>
     </div>
   );
