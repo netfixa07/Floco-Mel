@@ -1,0 +1,179 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {uid}
+    // Fields:
+    //   - name: string (required)
+    //   - email: string (required, email format)
+    //   - role: string (required, enum: ['admin', 'manager', 'cashier'])
+    //   - active: bool (optional)
+    //
+    // Collection: products
+    // Document ID: auto-generated
+    // Fields:
+    //   - name: string (required)
+    //   - category: string (required)
+    //   - cost: number (optional)
+    //   - price: number (required)
+    //   - unit: string (required, enum: ['kg', 'un', 'lt'])
+    //   - stockLevel: number (optional)
+    //   - minStock: number (optional)
+    //   - imageUrl: string (optional)
+    //   - isIngredient: bool (optional)
+    //
+    // Collection: sales
+    // Document ID: auto-generated
+    // Fields:
+    //   - items: list (required, objects with productId, name, quantity, price, subtotal)
+    //   - total: number (required)
+    //   - paymentMethods: list (required, objects with method, amount)
+    //   - timestamp: timestamp (required)
+    //   - cashierId: string (required)
+    //   - cashierName: string (optional)
+    //   - sessionId: string (optional)
+    //
+    // Collection: cash_sessions
+    // Document ID: auto-generated
+    // Fields:
+    //   - startTime: timestamp (required)
+    //   - endTime: timestamp (optional)
+    //   - initialValue: number (required)
+    //   - finalValue: number (optional)
+    //   - expectedValue: number (optional)
+    //   - totalSales: number (optional)
+    //   - difference: number (optional)
+    //   - status: string (required, enum: ['open', 'closed'])
+    //   - cashierId: string (required)
+    //   - cashierName: string (optional)
+    //   - notes: string (optional)
+    //
+    // Collection: expenses
+    // Document ID: auto-generated
+    // Fields:
+    //   - description: string (required)
+    //   - amount: number (required)
+    //   - category: string (required, enum: ['fixed', 'variable', 'stock'])
+    //   - date: string (required, ISO 8601)
+    //   - status: string (required, enum: ['paid', 'pending'])
+    //
+    // Collection: inventory_logs
+    // Document ID: auto-generated
+    // Fields:
+    //   - productId: string (required)
+    //   - productName: string (optional)
+    //   - type: string (required, enum: ['entry', 'sale', 'adjustment', 'loss'])
+    //   - quantity: number (required)
+    //   - reason: string (optional)
+    //   - timestamp: timestamp (required)
+    //   - userId: string (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'admin') ||
+        (request.auth.token.email == "netfixa07@gmail.com" && request.auth.token.email_verified == true) ||
+        (request.auth.token.email == "atizzoneto@gmail.com" && request.auth.token.email_verified == true) ||
+        (request.auth.token.email == "douglastaylorinvestimentos@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isManager() {
+      return isAdmin() || (
+        isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        (getUserData().role == 'manager' || getUserData().role == 'admin')
+      );
+    }
+
+    function isCashier() {
+      return isAdmin() || (
+        isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        (getUserData().role == 'cashier' || getUserData().role == 'manager' || getUserData().role == 'admin')
+      );
+    }
+
+    function isActive() {
+      return isAdmin() || (
+        isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (getUserData().active == true || !('active' in getUserData()))
+      );
+    }
+
+    function isValidSale(data) {
+      return data.items is list &&
+             data.total is number && data.total >= 0 &&
+             data.paymentMethods is list &&
+             data.timestamp is timestamp &&
+             data.cashierId == request.auth.uid;
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // Users: Only admins can manage, users can read their own
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && (isAdmin() || (isOwner(userId) && request.resource.data.role == 'cashier'));
+      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role);
+      allow delete: if isAdmin();
+    }
+
+    // Products: Managers can manage, cashiers can read and update stockLevel
+    match /products/{productId} {
+      allow read: if isCashier() && isActive();
+      allow update: if (isManager() && isActive()) || 
+                     (isCashier() && isActive() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stockLevel']));
+      allow create, delete: if isManager() && isActive();
+    }
+
+    // Sales: Cashiers can create and read, Managers can manage
+    match /sales/{saleId} {
+      allow read: if isCashier() && isActive();
+      allow create: if isCashier() && isActive() && isValidSale(request.resource.data);
+      allow update, delete: if isManager() && isActive();
+    }
+
+    // Cash Sessions: Cashiers can manage their own, Managers can manage all
+    match /cash_sessions/{sessionId} {
+      allow read: if isCashier() && isActive();
+      allow create: if isCashier() && isActive();
+      allow update: if (isManager() && isActive()) || (isCashier() && isActive() && resource.data.cashierId == request.auth.uid && resource.data.status == 'open');
+      allow delete: if isManager() && isActive();
+    }
+
+    // Expenses: Managers can manage
+    match /expenses/{expenseId} {
+      allow read, write: if isManager() && isActive();
+    }
+
+    // Inventory Logs: Managers can manage, cashiers can read and create
+    match /inventory_logs/{logId} {
+      allow read: if isCashier() && isActive();
+      allow create: if isCashier() && isActive();
+      allow update, delete: if isManager() && isActive();
+    }
+  }
+}

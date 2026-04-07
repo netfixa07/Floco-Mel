@@ -1,0 +1,125 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Employee or administrator of the ice cream shop",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "manager", "cashier"] },
+        "active": { "type": "boolean" }
+      },
+      "required": ["uid", "name", "email", "role"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Items sold in the shop",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "cost": { "type": "number" },
+        "price": { "type": "number" },
+        "unit": { "type": "string", "enum": ["kg", "un", "lt"] },
+        "stockLevel": { "type": "number" },
+        "minStock": { "type": "number" },
+        "imageUrl": { "type": "string" },
+        "isIngredient": { "type": "boolean", "description": "If true, this is an ingredient used in other products" }
+      },
+      "required": ["name", "category", "price", "unit"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "A completed transaction",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "productId": { "type": "string" },
+              "name": { "type": "string" },
+              "quantity": { "type": "number" },
+              "price": { "type": "number" },
+              "subtotal": { "type": "number" }
+            }
+          }
+        },
+        "total": { "type": "number" },
+        "paymentMethods": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": { "type": "string", "enum": ["cash", "pix", "card"] },
+              "amount": { "type": "number" }
+            }
+          }
+        },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "cashierId": { "type": "string" },
+        "cashierName": { "type": "string" },
+        "sessionId": { "type": "string" }
+      },
+      "required": ["items", "total", "paymentMethods", "timestamp", "cashierId"]
+    },
+    "CashSession": {
+      "title": "Cash Session",
+      "description": "Opening and closing of the cash register",
+      "type": "object",
+      "properties": {
+        "startTime": { "type": "string", "format": "date-time" },
+        "endTime": { "type": "string", "format": "date-time" },
+        "initialValue": { "type": "number" },
+        "finalValue": { "type": "number" },
+        "expectedValue": { "type": "number" },
+        "totalSales": { "type": "number" },
+        "difference": { "type": "number" },
+        "status": { "type": "string", "enum": ["open", "closed"] },
+        "cashierId": { "type": "string" },
+        "cashierName": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["startTime", "initialValue", "status", "cashierId"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Business costs",
+      "type": "object",
+      "properties": {
+        "description": { "type": "string" },
+        "amount": { "type": "number" },
+        "category": { "type": "string", "enum": ["fixed", "variable", "stock"] },
+        "date": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["paid", "pending"] }
+      },
+      "required": ["description", "amount", "category", "date", "status"]
+    },
+    "InventoryLog": {
+      "title": "Inventory Log",
+      "description": "History of stock movements",
+      "type": "object",
+      "properties": {
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "type": { "type": "string", "enum": ["entry", "sale", "adjustment", "loss"] },
+        "quantity": { "type": "number" },
+        "reason": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "userId": { "type": "string" }
+      },
+      "required": ["productId", "type", "quantity", "timestamp", "userId"]
+    }
+  },
+  "firestore": {
+    "users": { "schema": "User", "description": "System users" },
+    "products": { "schema": "Product", "description": "Catalog of products and ingredients" },
+    "sales": { "schema": "Sale", "description": "Sales transactions" },
+    "cash_sessions": { "schema": "CashSession", "description": "Daily cash register sessions" },
+    "expenses": { "schema": "Expense", "description": "Financial expenses" },
+    "inventory_logs": { "schema": "InventoryLog", "description": "Stock movement history" }
+  }
+}
