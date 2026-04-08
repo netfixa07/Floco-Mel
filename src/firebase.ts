@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 
 // Version: 1.0.1 - Fixed Vercel build error by removing JSON import
 // Default configuration from firebase-applet-config.json
@@ -81,4 +81,19 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   }
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
+}
+
+export async function logAudit(actionType: string, details: any) {
+  if (!auth.currentUser) return;
+  try {
+    await addDoc(collection(db, 'audit_log'), {
+      userId: auth.currentUser.uid,
+      userName: auth.currentUser.displayName || auth.currentUser.email || 'Unknown',
+      timestamp: serverTimestamp(),
+      actionType,
+      details
+    });
+  } catch (err) {
+    console.error('Audit Log Error:', err);
+  }
 }

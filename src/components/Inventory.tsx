@@ -10,7 +10,7 @@ import {
   query,
   orderBy
 } from 'firebase/firestore';
-import { db, auth, handleFirestoreError, OperationType } from '../firebase';
+import { db, auth, handleFirestoreError, OperationType, logAudit } from '../firebase';
 import { Product, InventoryLog } from '../types';
 import { 
   Plus, 
@@ -85,6 +85,14 @@ const Inventory: React.FC = () => {
     e.preventDefault();
     try {
       if (editingProduct) {
+        if (editingProduct.price !== formData.price) {
+          await logAudit('PRODUCT_PRICE_CHANGE', {
+            productId: editingProduct.id,
+            productName: editingProduct.name,
+            oldPrice: editingProduct.price,
+            newPrice: formData.price
+          });
+        }
         await updateDoc(doc(db, 'products', editingProduct.id), formData);
       } else {
         await addDoc(collection(db, 'products'), formData);
@@ -114,6 +122,15 @@ const Inventory: React.FC = () => {
         timestamp: serverTimestamp(),
         userId: auth.currentUser?.uid
       });
+
+      if (adjustmentQty < 0 && adjustmentReason.toLowerCase().includes('perda') || adjustmentReason.toLowerCase().includes('erro')) {
+        await logAudit('INVENTORY_DISCREPANCY', {
+          productId: adjustingStock.id,
+          productName: adjustingStock.name,
+          quantity: adjustmentQty,
+          reason: adjustmentReason
+        });
+      }
 
       setAdjustingStock(null);
       setAdjustmentQty(0);

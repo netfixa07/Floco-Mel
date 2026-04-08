@@ -78,6 +78,15 @@ service cloud.firestore {
     //   - timestamp: timestamp (required)
     //   - userId: string (required)
     //
+    // Collection: audit_log
+    // Document ID: auto-generated
+    // Fields:
+    //   - userId: string (required)
+    //   - userName: string (optional)
+    //   - timestamp: timestamp (required)
+    //   - actionType: string (required)
+    //   - details: map (optional)
+    //
     // ===============================================================
 
     // ===============================================================
@@ -135,6 +144,12 @@ service cloud.firestore {
              data.cashierId == request.auth.uid;
     }
 
+    function isValidAuditLog(data) {
+      return data.userId is string &&
+             data.timestamp is timestamp &&
+             data.actionType is string;
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -186,6 +201,12 @@ service cloud.firestore {
       allow read: if isCashier() && isActive();
       allow create: if isCashier() && isActive();
       allow update, delete: if isManager() && isActive();
+    }
+    // Audit Log: Only admins can read, authenticated users can create
+    match /audit_log/{logId} {
+      allow read: if isAdmin();
+      allow create: if isActive() && isValidAuditLog(request.resource.data);
+      allow update, delete: if false;
     }
   }
 }

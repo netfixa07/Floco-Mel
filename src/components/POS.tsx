@@ -11,7 +11,7 @@ import {
   getDocs,
   writeBatch
 } from 'firebase/firestore';
-import { db, auth, handleFirestoreError, OperationType } from '../firebase';
+import { db, auth, handleFirestoreError, OperationType, logAudit } from '../firebase';
 import { Product, Sale, SaleItem, CashSession, PaymentMethod } from '../types';
 import { LOGO_URL } from '../constants';
 import { 
@@ -223,11 +223,23 @@ const POS: React.FC = () => {
     if (!activeSession) return;
     try {
       const expected = activeSession.expectedValue || 0;
+      const difference = closingValue - expected;
+
+      if (Math.abs(difference) > 0.01) {
+        await logAudit('CASH_SESSION_DISCREPANCY', {
+          sessionId: activeSession.id,
+          cashierName: activeSession.cashierName,
+          expectedValue: expected,
+          finalValue: closingValue,
+          difference: difference
+        });
+      }
+
       await updateDoc(doc(db, 'cash_sessions', activeSession.id), {
         endTime: serverTimestamp(),
         finalValue: closingValue,
         status: 'closed',
-        difference: closingValue - expected
+        difference: difference
       });
       setIsClosingSession(false);
     } catch (err) {

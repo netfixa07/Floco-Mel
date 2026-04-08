@@ -112,6 +112,19 @@
         "userId": { "type": "string" }
       },
       "required": ["productId", "type", "quantity", "timestamp", "userId"]
+    },
+    "AuditLog": {
+      "title": "Audit Log",
+      "description": "Critical actions performed by users",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "ID of the user who performed the action" },
+        "userName": { "type": "string", "description": "Name of the user who performed the action" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "actionType": { "type": "string", "description": "Type of critical action" },
+        "details": { "type": "object", "description": "Data before and after the action" }
+      },
+      "required": ["userId", "timestamp", "actionType"]
     }
   },
   "firestore": {
@@ -120,6 +133,7 @@
     "sales": { "schema": "Sale", "description": "Sales transactions" },
     "cash_sessions": { "schema": "CashSession", "description": "Daily cash register sessions" },
     "expenses": { "schema": "Expense", "description": "Financial expenses" },
-    "inventory_logs": { "schema": "InventoryLog", "description": "Stock movement history" }
+    "inventory_logs": { "schema": "InventoryLog", "description": "Stock movement history" },
+    "audit_log": { "schema": "AuditLog", "description": "History of critical system actions" }
   }
 }

@@ -16,7 +16,7 @@ import {
 } from 'firebase/firestore';
 import { initializeApp, getApp, getApps } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut as authSignOut } from 'firebase/auth';
-import { auth, db, handleFirestoreError, OperationType, firebaseConfig, firestoreDatabaseId } from '../firebase';
+import { auth, db, handleFirestoreError, OperationType, firebaseConfig, firestoreDatabaseId, logAudit } from '../firebase';
 import { User, UserRole } from '../types';
 import { 
   Shield, 
@@ -53,7 +53,28 @@ const Employees: React.FC = () => {
   const [loadingActivity, setLoadingActivity] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    type: 'danger' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    type: 'info'
+  });
   const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (notification) {
+      const timer = setTimeout(() => setNotification(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
 
   // Form State for New Employee
   const [newEmployee, setNewEmployee] = useState({
@@ -165,31 +186,39 @@ const Employees: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
 
   const syncUsernames = async () => {
-    if (!window.confirm('Deseja sincronizar os acessos? Isso garantirá que todos os funcionários consigam logar pelo usuário.')) return;
-    setIsSyncing(true);
-    try {
-      const usersSnap = await getDocs(collection(db, 'users'));
-      const batch: Promise<any>[] = [];
-      
-      usersSnap.docs.forEach(userDoc => {
-        const data = userDoc.data() as User;
-        if (data.username) {
-          batch.push(setDoc(doc(db, 'usernames', data.username), {
-            uid: data.uid,
-            email: data.email,
-            active: data.active !== false
-          }));
+    setConfirmModal({
+      isOpen: true,
+      title: 'Sincronizar Acessos',
+      message: 'Deseja sincronizar os acessos? Isso garantirá que todos os funcionários consigam logar pelo usuário.',
+      type: 'info',
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        setIsSyncing(true);
+        try {
+          const usersSnap = await getDocs(collection(db, 'users'));
+          const batch: Promise<any>[] = [];
+          
+          usersSnap.docs.forEach(userDoc => {
+            const data = userDoc.data() as User;
+            if (data.username) {
+              batch.push(setDoc(doc(db, 'usernames', data.username), {
+                uid: data.uid,
+                email: data.email,
+                active: data.active !== false
+              }));
+            }
+          });
+          
+          await Promise.all(batch);
+          setNotification({ message: 'Sincronização concluída com sucesso!', type: 'success' });
+        } catch (err) {
+          console.error('Sync error:', err);
+          setNotification({ message: 'Erro ao sincronizar acessos.', type: 'error' });
+        } finally {
+          setIsSyncing(false);
         }
-      });
-      
-      await Promise.all(batch);
-      alert('Sincronização concluída com sucesso!');
-    } catch (err) {
-      console.error('Sync error:', err);
-      alert('Erro ao sincronizar acessos.');
-    } finally {
-      setIsSyncing(false);
-    }
+      }
+    });
   };
 
   const handleToggleActive = async (uid: string, currentStatus: boolean) => {
@@ -208,21 +237,35 @@ const Employees: React.FC = () => {
   };
 
   const handleDeleteEmployee = async (uid: string) => {
-    if (!window.confirm('Tem certeza que deseja excluir este funcionário? Esta ação não pode ser desfeita.')) return;
-    try {
-      const userDoc = await getDoc(doc(db, 'users', uid));
-      const userData = userDoc.data();
-      
-      await deleteDoc(doc(db, 'users', uid));
-      
-      if (userData?.username) {
-        await deleteDoc(doc(db, 'usernames', userData.username));
-      }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Excluir Funcionário',
+      message: 'Tem certeza que deseja excluir este funcionário? Esta ação não pode ser desfeita.',
+      type: 'danger',
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        try {
+          const userDoc = await getDoc(doc(db, 'users', uid));
+          const userData = userDoc.data();
+          
+          await deleteDoc(doc(db, 'users', uid));
+          
+          await logAudit('DELETE_EMPLOYEE', {
+            deletedUserId: uid,
+            deletedUserData: userData
+          });
 
-      setActiveMenu(null);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `users/${uid}`);
-    }
+          if (userData?.username) {
+            await deleteDoc(doc(db, 'usernames', userData.username));
+          }
+
+          setActiveMenu(null);
+          setNotification({ message: 'Funcionário excluído com sucesso!', type: 'success' });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.DELETE, `users/${uid}`);
+        }
+      }
+    });
   };
 
   const handleAddEmployee = async (e: React.FormEvent) => {
@@ -243,33 +286,39 @@ const Employees: React.FC = () => {
 
       if (!emailSnap.empty) {
         const existingUser = emailSnap.docs[0].data() as User;
-        if (window.confirm(`O usuário ${newEmployee.username} já possui um cadastro para ${existingUser.name}. Deseja reativar/atualizar este funcionário?`)) {
-          const updatedData = {
-            ...existingUser,
-            name: newEmployee.name,
-            username: newEmployee.username || existingUser.username,
-            role: newEmployee.role,
-            active: true,
-            cpf: newEmployee.cpf,
-            phone: newEmployee.phone,
-            birthDate: newEmployee.birthDate,
-            admissionDate: newEmployee.admissionDate,
-            cargo: newEmployee.cargo,
-            forcePasswordChange: newEmployee.forcePasswordChange,
-            updatedAt: serverTimestamp()
-          };
-          await setDoc(doc(db, 'users', existingUser.uid), updatedData);
-          setIsAddModalOpen(false);
-          resetForm();
-          alert('Funcionário atualizado/reativado com sucesso!');
-          return;
-        }
+        setConfirmModal({
+          isOpen: true,
+          title: 'Usuário Existente',
+          message: `O usuário ${newEmployee.username} já possui um cadastro para ${existingUser.name}. Deseja reativar/atualizar este funcionário?`,
+          type: 'info',
+          onConfirm: async () => {
+            setConfirmModal(prev => ({ ...prev, isOpen: false }));
+            const updatedData = {
+              ...existingUser,
+              name: newEmployee.name,
+              username: newEmployee.username || existingUser.username,
+              role: newEmployee.role,
+              active: true,
+              cpf: newEmployee.cpf,
+              phone: newEmployee.phone,
+              birthDate: newEmployee.birthDate,
+              admissionDate: newEmployee.admissionDate,
+              cargo: newEmployee.cargo,
+              forcePasswordChange: newEmployee.forcePasswordChange,
+              updatedAt: serverTimestamp()
+            };
+            await setDoc(doc(db, 'users', existingUser.uid), updatedData);
+            setIsAddModalOpen(false);
+            resetForm();
+            setNotification({ message: 'Funcionário atualizado/reativado com sucesso!', type: 'success' });
+          }
+        });
         setIsSubmitting(false);
         return;
       }
 
       if (!usernameSnap.empty) {
-        alert('Este nome de usuário já está sendo usado por outro funcionário. Escolha um diferente.');
+        setNotification({ message: 'Este nome de usuário já está sendo usado por outro funcionário.', type: 'error' });
         setIsSubmitting(false);
         return;
       }
@@ -318,19 +367,19 @@ const Employees: React.FC = () => {
         
         setIsAddModalOpen(false);
         resetForm();
-        alert('Funcionário cadastrado com sucesso!');
+        setNotification({ message: 'Funcionário cadastrado com sucesso!', type: 'success' });
       } catch (authErr: any) {
         if (authErr.code === 'auth/email-already-in-use') {
-          alert('Este usuário já possui uma conta de acesso. Tente um nome de usuário diferente.');
+          setNotification({ message: 'Este usuário já possui uma conta de acesso.', type: 'error' });
         } else if (authErr.code === 'auth/weak-password') {
-          alert('A senha deve ter pelo menos 6 caracteres.');
+          setNotification({ message: 'A senha deve ter pelo menos 6 caracteres.', type: 'error' });
         } else {
           throw authErr;
         }
       }
     } catch (err: any) {
       console.error("Error adding employee:", err);
-      alert('Erro ao cadastrar funcionário: ' + (err.message || 'Erro desconhecido'));
+      setNotification({ message: 'Erro ao cadastrar funcionário.', type: 'error' });
     } finally {
       setIsSubmitting(false);
     }
@@ -370,7 +419,7 @@ const Employees: React.FC = () => {
       });
 
       setEditingEmployee(null);
-      alert('Perfil atualizado com sucesso!');
+      setNotification({ message: 'Perfil atualizado com sucesso!', type: 'success' });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `users/${editingEmployee.uid}`);
     }
@@ -929,6 +978,66 @@ const Employees: React.FC = () => {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Confirmation Modal */}
+      <AnimatePresence>
+        {confirmModal.isOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-[32px] p-8 w-full max-w-sm shadow-2xl text-center"
+            >
+              <div className={cn(
+                "w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6",
+                confirmModal.type === 'danger' ? "bg-red-100 text-red-600" : "bg-amber-100 text-amber-600"
+              )}>
+                {confirmModal.type === 'danger' ? <Trash2 className="w-8 h-8" /> : <Shield className="w-8 h-8" />}
+              </div>
+              
+              <h3 className="text-xl font-bold text-slate-900 mb-2">{confirmModal.title}</h3>
+              <p className="text-slate-500 text-sm mb-8">{confirmModal.message}</p>
+              
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                  className="flex-1 py-4 font-bold text-slate-500 hover:bg-slate-50 rounded-2xl transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={confirmModal.onConfirm}
+                  className={cn(
+                    "flex-1 py-4 text-white font-bold rounded-2xl shadow-lg transition-all",
+                    confirmModal.type === 'danger' ? "bg-red-500 hover:bg-red-600 shadow-red-100" : "bg-amber-500 hover:bg-amber-600 shadow-amber-100"
+                  )}
+                >
+                  Confirmar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Notification Toast */}
+      <AnimatePresence>
+        {notification && (
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className={cn(
+              "fixed bottom-8 left-1/2 -translate-x-1/2 px-6 py-3 rounded-2xl shadow-xl z-[300] flex items-center gap-3 font-bold text-sm",
+              notification.type === 'success' ? "bg-green-600 text-white" : "bg-red-600 text-white"
+            )}
+          >
+            {notification.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <XCircle className="w-5 h-5" />}
+            {notification.message}
+          </motion.div>
         )}
       </AnimatePresence>
     </div>
