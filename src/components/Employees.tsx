@@ -4,26 +4,40 @@ import {
   onSnapshot, 
   updateDoc, 
   deleteDoc,
+  getDoc,
   doc, 
   query, 
   where,
   limit,
-  orderBy 
+  getDocs,
+  orderBy,
+  setDoc,
+  serverTimestamp
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { initializeApp, getApp, getApps } from 'firebase/app';
+import { getAuth, createUserWithEmailAndPassword, signOut as authSignOut } from 'firebase/auth';
+import { auth, db, handleFirestoreError, OperationType, firebaseConfig, firestoreDatabaseId } from '../firebase';
 import { User, UserRole } from '../types';
 import { 
   Shield, 
   User as UserIcon, 
-  Mail, 
   CheckCircle2, 
   XCircle,
   MoreVertical,
   Search,
   Edit2,
+  RefreshCw,
   Trash2,
   Activity,
-  X
+  X,
+  Plus,
+  Phone,
+  CreditCard,
+  Calendar,
+  Briefcase,
+  Lock,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -32,11 +46,64 @@ const Employees: React.FC = () => {
   const [employees, setEmployees] = useState<User[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<User | null>(null);
   const [viewingActivity, setViewingActivity] = useState<User | null>(null);
   const [employeeSales, setEmployeeSales] = useState<any[]>([]);
   const [loadingActivity, setLoadingActivity] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Form State for New Employee
+  const [newEmployee, setNewEmployee] = useState({
+    name: '',
+    email: '',
+    username: '',
+    password: '',
+    role: 'cashier' as UserRole,
+    cpf: '',
+    phone: '',
+    birthDate: '',
+    admissionDate: new Date().toISOString().split('T')[0],
+    cargo: '',
+    forcePasswordChange: true
+  });
+
+  const handleNameChange = (name: string) => {
+    const username = name
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") // Remove accents
+      .replace(/\s+/g, '.') // Replace spaces with dots
+      .replace(/[^a-z0-9.]/g, ''); // Remove special characters
+    
+    setNewEmployee(prev => {
+      const newUsername = prev.username === '' || prev.username === prev.name.toLowerCase().replace(/\s+/g, '.') ? username : prev.username;
+      return {
+        ...prev,
+        name,
+        username: newUsername,
+        email: `${newUsername}@flocomel.com`
+      };
+    });
+  };
+
+  const resetForm = () => {
+    setNewEmployee({
+      name: '',
+      email: '',
+      username: '',
+      password: '',
+      role: 'cashier',
+      cpf: '',
+      phone: '',
+      birthDate: '',
+      admissionDate: new Date().toISOString().split('T')[0],
+      cargo: '',
+      forcePasswordChange: true
+    });
+  };
 
   useEffect(() => {
     if (viewingActivity) {
@@ -95,9 +162,46 @@ const Employees: React.FC = () => {
     }
   };
 
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const syncUsernames = async () => {
+    if (!window.confirm('Deseja sincronizar os acessos? Isso garantirá que todos os funcionários consigam logar pelo usuário.')) return;
+    setIsSyncing(true);
+    try {
+      const usersSnap = await getDocs(collection(db, 'users'));
+      const batch: Promise<any>[] = [];
+      
+      usersSnap.docs.forEach(userDoc => {
+        const data = userDoc.data() as User;
+        if (data.username) {
+          batch.push(setDoc(doc(db, 'usernames', data.username), {
+            uid: data.uid,
+            email: data.email,
+            active: data.active !== false
+          }));
+        }
+      });
+      
+      await Promise.all(batch);
+      alert('Sincronização concluída com sucesso!');
+    } catch (err) {
+      console.error('Sync error:', err);
+      alert('Erro ao sincronizar acessos.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const handleToggleActive = async (uid: string, currentStatus: boolean) => {
     try {
       await updateDoc(doc(db, 'users', uid), { active: !currentStatus });
+      
+      // Update mapping status
+      const userDoc = await getDoc(doc(db, 'users', uid));
+      const userData = userDoc.data();
+      if (userData?.username) {
+        await updateDoc(doc(db, 'usernames', userData.username), { active: !currentStatus });
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `users/${uid}`);
     }
@@ -106,10 +210,129 @@ const Employees: React.FC = () => {
   const handleDeleteEmployee = async (uid: string) => {
     if (!window.confirm('Tem certeza que deseja excluir este funcionário? Esta ação não pode ser desfeita.')) return;
     try {
+      const userDoc = await getDoc(doc(db, 'users', uid));
+      const userData = userDoc.data();
+      
       await deleteDoc(doc(db, 'users', uid));
+      
+      if (userData?.username) {
+        await deleteDoc(doc(db, 'usernames', userData.username));
+      }
+
       setActiveMenu(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `users/${uid}`);
+    }
+  };
+
+  const handleAddEmployee = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    
+    const generatedEmail = newEmployee.email || `${newEmployee.username.toLowerCase().trim()}@flocomel.com`;
+    
+    try {
+      // 1. Check if email or username already exists in Firestore
+      const emailQuery = query(collection(db, 'users'), where('email', '==', generatedEmail.toLowerCase().trim()), limit(1));
+      const usernameQuery = query(collection(db, 'users'), where('username', '==', newEmployee.username.toLowerCase().trim()), limit(1));
+      
+      const [emailSnap, usernameSnap] = await Promise.all([
+        getDocs(emailQuery),
+        getDocs(usernameQuery)
+      ]);
+
+      if (!emailSnap.empty) {
+        const existingUser = emailSnap.docs[0].data() as User;
+        if (window.confirm(`O usuário ${newEmployee.username} já possui um cadastro para ${existingUser.name}. Deseja reativar/atualizar este funcionário?`)) {
+          const updatedData = {
+            ...existingUser,
+            name: newEmployee.name,
+            username: newEmployee.username || existingUser.username,
+            role: newEmployee.role,
+            active: true,
+            cpf: newEmployee.cpf,
+            phone: newEmployee.phone,
+            birthDate: newEmployee.birthDate,
+            admissionDate: newEmployee.admissionDate,
+            cargo: newEmployee.cargo,
+            forcePasswordChange: newEmployee.forcePasswordChange,
+            updatedAt: serverTimestamp()
+          };
+          await setDoc(doc(db, 'users', existingUser.uid), updatedData);
+          setIsAddModalOpen(false);
+          resetForm();
+          alert('Funcionário atualizado/reativado com sucesso!');
+          return;
+        }
+        setIsSubmitting(false);
+        return;
+      }
+
+      if (!usernameSnap.empty) {
+        alert('Este nome de usuário já está sendo usado por outro funcionário. Escolha um diferente.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      // 2. Create Auth User using secondary app
+      const secondaryAppName = `secondary-app-${Date.now()}`;
+      const secondaryApp = initializeApp(firebaseConfig, secondaryAppName);
+      const secondaryAuth = getAuth(secondaryApp);
+      
+      try {
+        const userCredential = await createUserWithEmailAndPassword(
+          secondaryAuth, 
+          generatedEmail, 
+          newEmployee.password
+        );
+        
+        const uid = userCredential.user.uid;
+        
+        // 3. Create Firestore Document
+        const employeeData: User = {
+          uid,
+          name: newEmployee.name,
+          email: generatedEmail.toLowerCase().trim(),
+          username: newEmployee.username.toLowerCase().trim(),
+          role: newEmployee.role,
+          active: true,
+          cpf: newEmployee.cpf,
+          phone: newEmployee.phone,
+          birthDate: newEmployee.birthDate,
+          admissionDate: newEmployee.admissionDate,
+          cargo: newEmployee.cargo,
+          forcePasswordChange: newEmployee.forcePasswordChange,
+          createdAt: serverTimestamp()
+        };
+        
+        await setDoc(doc(db, 'users', uid), employeeData);
+        
+        // 4. Create Username Mapping for login
+        await setDoc(doc(db, 'usernames', employeeData.username), {
+          uid: employeeData.uid,
+          email: employeeData.email,
+          active: true
+        });
+
+        await authSignOut(secondaryAuth);
+        
+        setIsAddModalOpen(false);
+        resetForm();
+        alert('Funcionário cadastrado com sucesso!');
+      } catch (authErr: any) {
+        if (authErr.code === 'auth/email-already-in-use') {
+          alert('Este usuário já possui uma conta de acesso. Tente um nome de usuário diferente.');
+        } else if (authErr.code === 'auth/weak-password') {
+          alert('A senha deve ter pelo menos 6 caracteres.');
+        } else {
+          throw authErr;
+        }
+      }
+    } catch (err: any) {
+      console.error("Error adding employee:", err);
+      alert('Erro ao cadastrar funcionário: ' + (err.message || 'Erro desconhecido'));
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -117,11 +340,37 @@ const Employees: React.FC = () => {
     e.preventDefault();
     if (!editingEmployee) return;
     try {
+      // Get old data to check if username changed
+      const oldDoc = await getDoc(doc(db, 'users', editingEmployee.uid));
+      const oldData = oldDoc.data();
+      const oldUsername = oldData?.username;
+
       await updateDoc(doc(db, 'users', editingEmployee.uid), {
         name: editingEmployee.name,
-        email: editingEmployee.email
+        email: editingEmployee.email,
+        username: editingEmployee.username || editingEmployee.email.split('@')[0],
+        cpf: editingEmployee.cpf || '',
+        phone: editingEmployee.phone || '',
+        cargo: editingEmployee.cargo || '',
+        role: editingEmployee.role,
+        birthDate: editingEmployee.birthDate || '',
+        admissionDate: editingEmployee.admissionDate || '',
+        updatedAt: serverTimestamp()
       });
+
+      // Update username mapping if changed
+      if (oldUsername && oldUsername !== editingEmployee.username) {
+        await deleteDoc(doc(db, 'usernames', oldUsername));
+      }
+      
+      await setDoc(doc(db, 'usernames', editingEmployee.username), {
+        uid: editingEmployee.uid,
+        email: editingEmployee.email,
+        active: editingEmployee.active !== false
+      });
+
       setEditingEmployee(null);
+      alert('Perfil atualizado com sucesso!');
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `users/${editingEmployee.uid}`);
     }
@@ -133,6 +382,27 @@ const Employees: React.FC = () => {
         <div>
           <h2 className="text-3xl font-bold text-slate-900">Gestão de Equipe</h2>
           <p className="text-slate-500">Controle de acessos e permissões dos funcionários.</p>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={syncUsernames}
+            disabled={isSyncing}
+            className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-6 py-3 rounded-2xl font-bold transition-all flex items-center gap-2"
+          >
+            {isSyncing ? (
+              <div className="w-5 h-5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <RefreshCw className="w-5 h-5" />
+            )}
+            Sincronizar Acessos
+          </button>
+          <button
+            onClick={() => setIsAddModalOpen(true)}
+            className="bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg shadow-amber-200 transition-all flex items-center gap-2"
+          >
+            <Plus className="w-5 h-5" />
+            Novo Funcionário
+          </button>
         </div>
       </div>
 
@@ -178,7 +448,7 @@ const Employees: React.FC = () => {
                       </div>
                       <div>
                         <p className="font-bold text-slate-900">{employee.name}</p>
-                        <p className="text-xs text-slate-400">{employee.email}</p>
+                        <p className="text-xs text-slate-400">@{employee.username || employee.email.split('@')[0]}</p>
                       </div>
                     </div>
                   </td>
@@ -271,6 +541,229 @@ const Employees: React.FC = () => {
         </div>
       </div>
 
+      {/* Add Employee Modal */}
+      <AnimatePresence>
+        {isAddModalOpen && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="bg-white rounded-3xl p-8 w-full max-w-2xl shadow-2xl overflow-y-auto max-h-[90vh]"
+            >
+              <div className="flex justify-between items-center mb-8">
+                <div>
+                  <h3 className="text-2xl font-bold">Cadastrar Funcionário</h3>
+                  <p className="text-slate-400 text-sm">Preencha os dados para gerar o acesso.</p>
+                </div>
+                <button onClick={() => setIsAddModalOpen(false)} className="p-2 hover:bg-slate-50 rounded-xl">
+                  <X className="w-6 h-6 text-slate-400" />
+                </button>
+              </div>
+
+              <form onSubmit={handleAddEmployee} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Dados Pessoais */}
+                  <div className="space-y-4">
+                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-2">Dados Pessoais</h4>
+                    
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-500 ml-1">Nome Completo</label>
+                      <div className="relative">
+                        <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                        <input
+                          required
+                          type="text"
+                          value={newEmployee.name}
+                          onChange={(e) => handleNameChange(e.target.value)}
+                          placeholder="Nome do funcionário"
+                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border-2 border-transparent focus:border-amber-200 rounded-xl outline-none transition-all text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-500 ml-1">CPF</label>
+                      <div className="relative">
+                        <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                        <input
+                          type="text"
+                          value={newEmployee.cpf}
+                          onChange={(e) => setNewEmployee({ ...newEmployee, cpf: e.target.value })}
+                          placeholder="000.000.000-00"
+                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border-2 border-transparent focus:border-amber-200 rounded-xl outline-none transition-all text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-500 ml-1">Telefone</label>
+                      <div className="relative">
+                        <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                        <input
+                          type="tel"
+                          value={newEmployee.phone}
+                          onChange={(e) => setNewEmployee({ ...newEmployee, phone: e.target.value })}
+                          placeholder="(00) 00000-0000"
+                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border-2 border-transparent focus:border-amber-200 rounded-xl outline-none transition-all text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-500 ml-1">Data de Nascimento</label>
+                      <div className="relative">
+                        <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                        <input
+                          type="date"
+                          value={newEmployee.birthDate}
+                          onChange={(e) => setNewEmployee({ ...newEmployee, birthDate: e.target.value })}
+                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border-2 border-transparent focus:border-amber-200 rounded-xl outline-none transition-all text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Dados Profissionais */}
+                  <div className="space-y-4">
+                    <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-2">Dados Profissionais</h4>
+                    
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-500 ml-1">Cargo</label>
+                      <div className="relative">
+                        <Briefcase className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                        <input
+                          type="text"
+                          value={newEmployee.cargo}
+                          onChange={(e) => setNewEmployee({ ...newEmployee, cargo: e.target.value })}
+                          placeholder="Ex: Atendente, Caixa"
+                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border-2 border-transparent focus:border-amber-200 rounded-xl outline-none transition-all text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-500 ml-1">Nível de Acesso</label>
+                      <div className="relative">
+                        <Shield className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                        <select
+                          value={newEmployee.role}
+                          onChange={(e) => setNewEmployee({ ...newEmployee, role: e.target.value as UserRole })}
+                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border-2 border-transparent focus:border-amber-200 rounded-xl outline-none transition-all text-sm appearance-none cursor-pointer"
+                        >
+                          <option value="cashier">Funcionário (Caixa/PDV)</option>
+                          <option value="manager">Gerente</option>
+                          <option value="admin">Administrador</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-500 ml-1">Data de Admissão</label>
+                      <div className="relative">
+                        <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                        <input
+                          type="date"
+                          value={newEmployee.admissionDate}
+                          onChange={(e) => setNewEmployee({ ...newEmployee, admissionDate: e.target.value })}
+                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border-2 border-transparent focus:border-amber-200 rounded-xl outline-none transition-all text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Dados de Acesso */}
+                <div className="space-y-4 pt-4">
+                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-2">Dados de Acesso (Login)</h4>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-500 ml-1 flex items-center gap-1">
+                        Usuário (Login)
+                        <span className="text-[10px] font-normal text-slate-400 normal-case">(O que ele usará para entrar)</span>
+                      </label>
+                      <div className="relative">
+                        <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                        <input
+                          required
+                          type="text"
+                          value={newEmployee.username}
+                          onChange={(e) => {
+                            const val = e.target.value.toLowerCase().replace(/\s/g, '');
+                            setNewEmployee({ ...newEmployee, username: val, email: `${val}@flocomel.com` });
+                          }}
+                          placeholder="ex: joao.silva"
+                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border-2 border-transparent focus:border-amber-200 rounded-xl outline-none transition-all text-sm"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-500 ml-1">Senha Inicial</label>
+                      <div className="relative">
+                        <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300" />
+                        <input
+                          required
+                          type={showPassword ? "text" : "password"}
+                          value={newEmployee.password}
+                          onChange={(e) => setNewEmployee({ ...newEmployee, password: e.target.value })}
+                          placeholder="••••••••"
+                          className="w-full pl-10 pr-12 py-3 bg-slate-50 border-2 border-transparent focus:border-amber-200 rounded-xl outline-none transition-all text-sm"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-amber-500 transition-colors"
+                        >
+                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 px-1">
+                    <input
+                      type="checkbox"
+                      id="forcePass"
+                      checked={newEmployee.forcePasswordChange}
+                      onChange={(e) => setNewEmployee({ ...newEmployee, forcePasswordChange: e.target.checked })}
+                      className="w-4 h-4 rounded border-slate-200 text-amber-500 focus:ring-amber-500"
+                    />
+                    <label htmlFor="forcePass" className="text-xs text-slate-500 font-medium cursor-pointer">
+                      Forçar troca de senha no primeiro login
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex gap-4 pt-6">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddModalOpen(false)}
+                    className="flex-1 py-4 font-bold text-slate-500 hover:bg-slate-50 rounded-2xl transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="flex-1 py-4 bg-amber-500 text-white font-bold rounded-2xl hover:bg-amber-600 shadow-lg shadow-amber-100 transition-all flex items-center justify-center gap-2"
+                  >
+                    {isSubmitting ? (
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <>
+                        <Plus className="w-5 h-5" />
+                        Cadastrar Funcionário
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Edit Employee Modal */}
       <AnimatePresence>
         {editingEmployee && (
@@ -299,14 +792,51 @@ const Employees: React.FC = () => {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-bold text-slate-700">E-mail</label>
+                  <label className="text-sm font-bold text-slate-700">Usuário (Login)</label>
                   <input
                     required
-                    type="email"
-                    value={editingEmployee.email}
-                    onChange={(e) => setEditingEmployee({ ...editingEmployee, email: e.target.value })}
+                    type="text"
+                    value={editingEmployee.username || ''}
+                    onChange={(e) => {
+                      const val = e.target.value.toLowerCase().replace(/\s/g, '');
+                      setEditingEmployee({ 
+                        ...editingEmployee, 
+                        username: val
+                      });
+                    }}
+                    className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-amber-400 outline-none transition-all"
+                    placeholder="ex: joao.silva"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700">CPF</label>
+                  <input
+                    type="text"
+                    value={editingEmployee.cpf || ''}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, cpf: e.target.value })}
                     className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-amber-400 outline-none transition-all"
                   />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700">Telefone</label>
+                  <input
+                    type="text"
+                    value={editingEmployee.phone || ''}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, phone: e.target.value })}
+                    className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-amber-400 outline-none transition-all"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700">Nível de Acesso</label>
+                  <select
+                    value={editingEmployee.role}
+                    onChange={(e) => setEditingEmployee({ ...editingEmployee, role: e.target.value as UserRole })}
+                    className="w-full px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-2xl focus:border-amber-400 outline-none transition-all"
+                  >
+                    <option value="cashier">Caixa</option>
+                    <option value="manager">Gerente</option>
+                    <option value="admin">Administrador</option>
+                  </select>
                 </div>
 
                 <div className="flex gap-3 mt-8">

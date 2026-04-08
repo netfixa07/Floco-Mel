@@ -69,6 +69,12 @@ const Finance: React.FC = () => {
   const totalExpenses = useMemo(() => expenses.reduce((sum, e) => sum + e.amount, 0), [expenses]);
   const netProfit = totalRevenue - totalExpenses;
 
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const expenseByCategory = useMemo(() => {
     const data: Record<string, number> = {};
     expenses.forEach(e => {
@@ -182,31 +188,33 @@ const Finance: React.FC = () => {
         </div>
 
         {/* Chart */}
-        <div className="lg:col-span-4 bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
+        <div className="lg:col-span-4 bg-white p-8 rounded-3xl border border-slate-100 shadow-sm min-w-0">
           <h3 className="font-bold text-lg mb-8">Despesas por Categoria</h3>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={expenseByCategory}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {expenseByCategory.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <RechartsTooltip 
-                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                  formatter={(v: number) => formatCurrency(v)}
-                />
-                <Legend verticalAlign="bottom" height={36}/>
-              </PieChart>
-            </ResponsiveContainer>
+          <div className="w-full relative">
+            {isMounted && (
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={expenseByCategory}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {expenseByCategory.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip 
+                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                    formatter={(v: number) => formatCurrency(v)}
+                  />
+                  <Legend verticalAlign="bottom" height={36}/>
+                </PieChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       </div>

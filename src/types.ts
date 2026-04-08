@@ -4,8 +4,17 @@ export interface User {
   uid: string;
   name: string;
   email: string;
+  username?: string;
   role: UserRole;
-  active?: boolean;
+  active: boolean;
+  cpf?: string;
+  birthDate?: string;
+  phone?: string;
+  admissionDate?: string;
+  cargo?: string; // Job title like "Atendente", "Caixa"
+  forcePasswordChange?: boolean;
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 export interface Product {
@@ -32,6 +41,9 @@ export interface SaleItem {
 export interface PaymentMethod {
   method: 'cash' | 'pix' | 'card';
   amount: number;
+  cardType?: 'debit' | 'credit';
+  creditType?: 'one-time' | 'installments';
+  installments?: number;
 }
 
 export interface Sale {

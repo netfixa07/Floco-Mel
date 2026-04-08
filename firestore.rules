@@ -12,7 +12,12 @@ service cloud.firestore {
     //   - name: string (required)
     //   - email: string (required, email format)
     //   - role: string (required, enum: ['admin', 'manager', 'cashier'])
-    //   - active: bool (optional)
+    //   - active: bool (required)
+    //   - cpf: string (optional)
+    //   - phone: string (optional)
+    //   - cargo: string (optional)
+    //   - forcePasswordChange: bool (optional)
+    //   - createdAt: timestamp (optional)
     //
     // Collection: products
     // Document ID: auto-generated
@@ -96,7 +101,8 @@ service cloud.firestore {
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'admin') ||
         (request.auth.token.email == "netfixa07@gmail.com" && request.auth.token.email_verified == true) ||
         (request.auth.token.email == "atizzoneto@gmail.com" && request.auth.token.email_verified == true) ||
-        (request.auth.token.email == "douglastaylorinvestimentos@gmail.com" && request.auth.token.email_verified == true)
+        (request.auth.token.email == "douglastaylorinvestimentos@gmail.com" && request.auth.token.email_verified == true) ||
+        (request.auth.token.email == "admin@flocomel.com")
       );
     }
 
@@ -139,6 +145,12 @@ service cloud.firestore {
       allow create: if isAuthenticated() && (isAdmin() || (isOwner(userId) && request.resource.data.role == 'cashier'));
       allow update: if isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role);
       allow delete: if isAdmin();
+    }
+
+    // Usernames: Mapping for login by username
+    match /usernames/{username} {
+      allow get: if true; // Allow anyone to look up a username to get the email for login
+      allow list, write: if isAdmin();
     }
 
     // Products: Managers can manage, cashiers can read and update stockLevel

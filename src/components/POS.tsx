@@ -49,7 +49,7 @@ const POS: React.FC = () => {
   const [notification, setNotification] = useState<{ message: string, type: 'error' | 'success' } | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [selectedPayments, setSelectedPayments] = useState<{ method: 'cash' | 'pix' | 'card', amount: number, received?: number }[]>([]);
+  const [selectedPayments, setSelectedPayments] = useState<PaymentMethod[]>([]);
   const [cashReceived, setCashReceived] = useState(0);
 
   // Totals
@@ -74,6 +74,21 @@ const POS: React.FC = () => {
   const updatePaymentMethod = (index: number, method: 'cash' | 'pix' | 'card') => {
     const newPayments = [...selectedPayments];
     newPayments[index].method = method;
+    if (method === 'card') {
+      newPayments[index].cardType = 'debit';
+      newPayments[index].creditType = 'one-time';
+      newPayments[index].installments = 1;
+    } else {
+      delete newPayments[index].cardType;
+      delete newPayments[index].creditType;
+      delete newPayments[index].installments;
+    }
+    setSelectedPayments(newPayments);
+  };
+
+  const updateCardDetails = (index: number, details: Partial<PaymentMethod>) => {
+    const newPayments = [...selectedPayments];
+    newPayments[index] = { ...newPayments[index], ...details };
     setSelectedPayments(newPayments);
   };
 
@@ -220,7 +235,7 @@ const POS: React.FC = () => {
     }
   };
 
-  const processSale = async (methods: { method: 'cash' | 'pix' | 'card', amount: number }[]) => {
+  const processSale = async (methods: PaymentMethod[]) => {
     if (!activeSession || cart.length === 0) return;
     setIsProcessingSale(true);
     try {
@@ -342,9 +357,22 @@ const POS: React.FC = () => {
               </div>
             </div>
             <div style="margin-top: 10px; font-size: 10px;">
-              <p>Pagamento: ${sale.paymentMethods?.[0]?.method?.toUpperCase() || 'N/A'}</p>
-              <p>Atendente: ${sale.cashierName || 'N/A'}</p>
-              <p>ID Venda: ${sale.id?.substring(0, 8) || ''}</p>
+              <p style="margin: 2px 0;"><strong>PAGAMENTOS:</strong></p>
+              ${sale.paymentMethods.map(p => {
+                let details = p.method.toUpperCase();
+                if (p.method === 'card') {
+                  details += ` (${p.cardType === 'debit' ? 'DÉBITO' : 'CRÉDITO'})`;
+                  if (p.cardType === 'credit') {
+                    details += p.creditType === 'one-time' ? ' À VISTA' : ` ${p.installments}X`;
+                  }
+                }
+                return `<div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                  <span>${details}</span>
+                  <span>${formatCurrency(p.amount)}</span>
+                </div>`;
+              }).join('')}
+              <p style="margin: 8px 0 2px 0;">Atendente: ${sale.cashierName || 'N/A'}</p>
+              <p style="margin: 2px 0;">ID Venda: ${sale.id?.substring(0, 8) || ''}</p>
             </div>
             <div class="footer">
               <p>Obrigado pela preferência!</p>
@@ -631,34 +659,85 @@ const POS: React.FC = () => {
                 <div className="space-y-3">
                   {selectedPayments.map((payment, index) => (
                     <div key={index} className="flex gap-3 items-center bg-white border border-slate-100 p-3 rounded-2xl shadow-sm">
-                      <select 
-                        value={payment.method}
-                        onChange={(e) => updatePaymentMethod(index, e.target.value as any)}
-                        className="bg-slate-50 border-none rounded-xl px-3 py-2 text-sm font-bold focus:ring-2 focus:ring-amber-400 outline-none"
-                      >
-                        <option value="cash">Dinheiro</option>
-                        <option value="pix">PIX</option>
-                        <option value="card">Cartão</option>
-                      </select>
-                      
-                      <div className="relative flex-1">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">R$</span>
-                        <input 
-                          type="number"
-                          value={payment.amount}
-                          onChange={(e) => updatePaymentAmount(index, Number(e.target.value))}
-                          className="w-full pl-8 pr-3 py-2 bg-slate-50 border-none rounded-xl text-sm font-bold focus:ring-2 focus:ring-amber-400 outline-none"
-                        />
-                      </div>
+                      <div className="flex flex-col gap-3 flex-1">
+                        <div className="flex gap-3 items-center">
+                          <select 
+                            value={payment.method}
+                            onChange={(e) => updatePaymentMethod(index, e.target.value as any)}
+                            className="bg-slate-50 border-none rounded-xl px-3 py-2 text-sm font-bold focus:ring-2 focus:ring-amber-400 outline-none"
+                          >
+                            <option value="cash">Dinheiro</option>
+                            <option value="pix">PIX</option>
+                            <option value="card">Cartão</option>
+                          </select>
+                          
+                          <div className="relative flex-1">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">R$</span>
+                            <input 
+                              type="number"
+                              value={payment.amount}
+                              onChange={(e) => updatePaymentAmount(index, Number(e.target.value))}
+                              className="w-full pl-8 pr-3 py-2 bg-slate-50 border-none rounded-xl text-sm font-bold focus:ring-2 focus:ring-amber-400 outline-none"
+                            />
+                          </div>
 
-                      {selectedPayments.length > 1 && (
-                        <button 
-                          onClick={() => removePaymentMethod(index)}
-                          className="p-2 text-slate-300 hover:text-red-500 transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
+                          {selectedPayments.length > 1 && (
+                            <button 
+                              onClick={() => removePaymentMethod(index)}
+                              className="p-2 text-slate-300 hover:text-red-500 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+
+                        {payment.method === 'card' && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-50 rounded-xl">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">Tipo de Cartão</label>
+                              <select 
+                                value={payment.cardType}
+                                onChange={(e) => updateCardDetails(index, { cardType: e.target.value as any })}
+                                className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-bold focus:ring-2 focus:ring-amber-400 outline-none"
+                              >
+                                <option value="debit">Débito</option>
+                                <option value="credit">Crédito</option>
+                              </select>
+                            </div>
+
+                            {payment.cardType === 'credit' && (
+                              <>
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">Modalidade</label>
+                                  <select 
+                                    value={payment.creditType}
+                                    onChange={(e) => updateCardDetails(index, { creditType: e.target.value as any })}
+                                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-bold focus:ring-2 focus:ring-amber-400 outline-none"
+                                  >
+                                    <option value="one-time">À Vista</option>
+                                    <option value="installments">Parcelado</option>
+                                  </select>
+                                </div>
+
+                                {payment.creditType === 'installments' && (
+                                  <div className="space-y-1 sm:col-span-2">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider ml-1">Parcelas</label>
+                                    <select 
+                                      value={payment.installments}
+                                      onChange={(e) => updateCardDetails(index, { installments: Number(e.target.value) })}
+                                      className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-bold focus:ring-2 focus:ring-amber-400 outline-none"
+                                    >
+                                      {[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => (
+                                        <option key={n} value={n}>{n}x</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

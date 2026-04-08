@@ -16,7 +16,7 @@ const DEFAULT_CONFIG = {
 };
 
 // Support for environment variables (useful for Vercel/Production)
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || DEFAULT_CONFIG.apiKey,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || DEFAULT_CONFIG.authDomain,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || DEFAULT_CONFIG.projectId,
@@ -26,7 +26,7 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || DEFAULT_CONFIG.measurementId,
 };
 
-const firestoreDatabaseId = import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || DEFAULT_CONFIG.firestoreDatabaseId;
+export const firestoreDatabaseId = import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || DEFAULT_CONFIG.firestoreDatabaseId;
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firestoreDatabaseId);

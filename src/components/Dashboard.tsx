@@ -85,6 +85,12 @@ const Dashboard: React.FC = () => {
   const totalRevenue = todaySales.reduce((sum, s) => sum + s.total, 0);
   const ticketMedio = todaySales.length > 0 ? totalRevenue / todaySales.length : 0;
   
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const chartData = useMemo(() => {
     const last7Days = Array.from({ length: 7 }).map((_, i) => {
       const date = subDays(new Date(), i);
@@ -153,27 +159,29 @@ const Dashboard: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        <div className="lg:col-span-8 bg-white p-8 rounded-3xl border border-slate-100 shadow-sm">
+        <div className="lg:col-span-8 bg-white p-8 rounded-3xl border border-slate-100 shadow-sm min-w-0">
           <h3 className="font-bold text-lg mb-8">Desempenho de Vendas (7 dias)</h3>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.1}/>
-                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} tickFormatter={(v) => `R$${v}`} />
-                <Tooltip 
-                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                  formatter={(v: number) => [formatCurrency(v), 'Vendas']}
-                />
-                <Area type="monotone" dataKey="total" stroke="#f59e0b" strokeWidth={3} fillOpacity={1} fill="url(#colorTotal)" />
-              </AreaChart>
-            </ResponsiveContainer>
+          <div className="w-full relative">
+            {isMounted && (
+              <ResponsiveContainer width="100%" height={300}>
+                <AreaChart data={chartData}>
+                  <defs>
+                    <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.1}/>
+                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} tickFormatter={(v) => `R$${v}`} />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                    formatter={(v: number) => [formatCurrency(v), 'Vendas']}
+                  />
+                  <Area type="monotone" dataKey="total" stroke="#f59e0b" strokeWidth={3} fillOpacity={1} fill="url(#colorTotal)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 

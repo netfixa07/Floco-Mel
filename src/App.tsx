@@ -12,16 +12,22 @@ import {
   signInWithPopup, 
   GoogleAuthProvider, 
   signOut,
-  signInWithEmailAndPassword
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { 
   doc, 
   getDoc, 
   setDoc, 
+  updateDoc,
   onSnapshot,
   collection,
   query,
-  where
+  where,
+  getDocs,
+  limit,
+  serverTimestamp
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -43,7 +49,8 @@ import {
   Lock,
   Eye,
   EyeOff,
-  AlertCircle
+  AlertCircle,
+  User as UserIcon
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -79,32 +86,58 @@ const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-        if (userDoc.exists()) {
-          const userData = userDoc.data() as User;
-          const adminEmails = ['netfixa07@gmail.com', 'douglastaylorinvestimentos@gmail.com', 'atizzoneto@gmail.com'];
-          const shouldBeAdmin = adminEmails.includes(firebaseUser.email || '');
-          
-          if (shouldBeAdmin && userData.role !== 'admin') {
-            const updatedUser = { ...userData, role: 'admin' as UserRole };
-            await setDoc(doc(db, 'users', firebaseUser.uid), updatedUser);
-            setUser(updatedUser);
+        try {
+          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+          if (userDoc.exists()) {
+            const userData = userDoc.data() as User;
+            
+            // Check if user is active
+            if (userData.active === false) {
+              await signOut(auth);
+              setUser(null);
+              return;
+            }
+
+            if (userData.forcePasswordChange) {
+              // Note: In a production app, you would redirect to a /change-password route
+              console.warn("Usuário precisa trocar a senha.");
+            }
+
+            const adminEmails = ['netfixa07@gmail.com', 'douglastaylorinvestimentos@gmail.com', 'atizzoneto@gmail.com', 'admin@flocomel.com'];
+            const shouldBeAdmin = adminEmails.includes(firebaseUser.email?.toLowerCase() || '');
+            
+            if (shouldBeAdmin && userData.role !== 'admin') {
+              const updatedUser = { ...userData, role: 'admin' as UserRole, active: true };
+              await setDoc(doc(db, 'users', firebaseUser.uid), updatedUser);
+              setUser(updatedUser);
+            } else {
+              setUser(userData);
+            }
           } else {
-            setUser(userData);
+            // Create default user if it's the admin email
+            const adminEmails = ['netfixa07@gmail.com', 'douglastaylorinvestimentos@gmail.com', 'atizzoneto@gmail.com', 'admin@flocomel.com'];
+            const isAdmin = adminEmails.includes(firebaseUser.email?.toLowerCase() || '');
+            
+            if (isAdmin) {
+              const newUser: User = {
+                uid: firebaseUser.uid,
+                name: firebaseUser.displayName || 'Administrador',
+                email: firebaseUser.email || '',
+                role: 'admin',
+                active: true,
+                createdAt: new Date().toISOString()
+              };
+              await setDoc(doc(db, 'users', firebaseUser.uid), newUser);
+              setUser(newUser);
+            } else {
+              // Not an admin and not in DB? Log out.
+              await signOut(auth);
+              setUser(null);
+            }
           }
-        } else {
-          // Create default user if it's the admin email
-          const adminEmails = ['netfixa07@gmail.com', 'douglastaylorinvestimentos@gmail.com', 'atizzoneto@gmail.com'];
-          const isAdmin = adminEmails.includes(firebaseUser.email || '');
-          const newUser: User = {
-            uid: firebaseUser.uid,
-            name: firebaseUser.displayName || 'Usuário',
-            email: firebaseUser.email || '',
-            role: isAdmin ? 'admin' : 'cashier',
-            active: true
-          };
-          await setDoc(doc(db, 'users', firebaseUser.uid), newUser);
-          setUser(newUser);
+        } catch (error) {
+          console.error("Auth error:", error);
+          setUser(null);
         }
       } else {
         setUser(null);
@@ -293,25 +326,134 @@ const Login: React.FC = () => {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleEmployeeLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
-      setError('Por favor, preencha todos os campos.');
+      setError('Por favor, digite seu usuário e senha.');
       return;
     }
     setIsLoggingIn(true);
     setError(null);
     try {
-      await loginWithEmail(email, password);
-    } catch (err: any) {
-      console.error('Login error:', err);
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-        setError('E-mail ou senha incorretos.');
-      } else if (err.code === 'auth/invalid-email') {
-        setError('E-mail inválido.');
-      } else {
-        setError('Falha na autenticação. Verifique se o login por e-mail está ativado no Firebase.');
+      // Employees MUST login by username
+      const username = email.toLowerCase().trim();
+      const usernameDoc = await getDoc(doc(db, 'usernames', username));
+      
+      if (!usernameDoc.exists()) {
+        setError('Usuário não encontrado. Verifique se o administrador já cadastrou você.');
+        setIsLoggingIn(false);
+        return;
       }
+
+      const userData = usernameDoc.data();
+      if (userData.active === false) {
+        setError('Sua conta está inativa. Entre em contato com o administrador.');
+        setIsLoggingIn(false);
+        return;
+      }
+
+      await loginWithEmail(userData.email, password);
+    } catch (err: any) {
+      console.error('Employee login error:', err);
+      if (err.code === 'auth/invalid-credential' || err.code === 'auth/wrong-password') {
+        setError('Senha incorreta para este usuário.');
+      } else {
+        setError('Erro ao entrar. Verifique sua conexão ou tente novamente.');
+      }
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setError('Digite seu e-mail para receber o link de redefinição.');
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email);
+      alert('E-mail de redefinição enviado! Verifique sua caixa de entrada.');
+    } catch (err: any) {
+      console.error('Reset password error:', err);
+      setError('Erro ao enviar e-mail de redefinição. Verifique o endereço digitado.');
+    }
+  };
+
+  const handleAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password) {
+      setError('Digite usuário e senha administrativos.');
+      return;
+    }
+    setIsLoggingIn(true);
+    setError(null);
+    try {
+      const username = email.toLowerCase().trim();
+      
+      // Fixed admin credentials
+      if (username === 'admin' && password === 'admin1234') {
+        // Use a fixed admin email for Firebase Auth
+        const adminEmail = 'admin@flocomel.com';
+        let uid: string;
+        
+        try {
+          const userCredential = await signInWithEmailAndPassword(auth, adminEmail, password);
+          uid = userCredential.user.uid;
+        } catch (err: any) {
+          // If account doesn't exist in Auth, create it
+          if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
+            try {
+              const userCredential = await createUserWithEmailAndPassword(auth, adminEmail, password);
+              uid = userCredential.user.uid;
+            } catch (createErr: any) {
+              // If it failed because it already exists but we got wrong-password, then it's a wrong password
+              if (err.code === 'auth/wrong-password') {
+                setError('Senha administrativa incorreta.');
+                setIsLoggingIn(false);
+                return;
+              }
+              throw createErr;
+            }
+          } else {
+            throw err;
+          }
+        }
+
+        // Ensure admin document exists in Firestore (Robust check after login/creation)
+        const adminDoc = await getDoc(doc(db, 'users', uid));
+        if (!adminDoc.exists()) {
+          await setDoc(doc(db, 'users', uid), {
+            uid,
+            name: 'Administrador Principal',
+            email: adminEmail,
+            username: 'admin',
+            role: 'admin',
+            active: true,
+            createdAt: serverTimestamp()
+          });
+        } else if (adminDoc.data()?.role !== 'admin' || adminDoc.data()?.active !== true) {
+          // Force admin role and active status if document exists but is wrong
+          await updateDoc(doc(db, 'users', uid), {
+            role: 'admin',
+            active: true
+          });
+        }
+        
+        // Ensure username mapping exists
+        const usernameDoc = await getDoc(doc(db, 'usernames', 'admin'));
+        if (!usernameDoc.exists()) {
+          await setDoc(doc(db, 'usernames', 'admin'), {
+            uid,
+            email: adminEmail,
+            active: true
+          });
+        }
+      } else {
+        setError('Usuário ou senha administrativa incorretos.');
+      }
+    } catch (err: any) {
+      console.error('Admin login error:', err);
+      setError('Erro na autenticação administrativa.');
     } finally {
       setIsLoggingIn(false);
     }
@@ -356,84 +498,158 @@ const Login: React.FC = () => {
           </button>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-4 text-left">
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider ml-1">E-mail ou Usuário</label>
-            <div className="relative">
-              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="exemplo@flocomel.com"
-                className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-transparent focus:border-amber-200 focus:bg-white rounded-2xl outline-none transition-all font-medium text-slate-700"
-              />
+        {loginType === 'employee' ? (
+          <form onSubmit={handleEmployeeLogin} className="space-y-4 text-left">
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider ml-1">Usuário (Login)</label>
+              <div className="relative">
+                <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+                <input
+                  type="text"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Seu usuário (ex: joao.silva)"
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-transparent focus:border-amber-200 focus:bg-white rounded-2xl outline-none transition-all font-medium text-slate-700"
+                />
+              </div>
             </div>
-          </div>
 
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider ml-1">Senha</label>
-            <div className="relative">
-              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
-              <input
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full pl-12 pr-12 py-4 bg-slate-50 border-2 border-transparent focus:border-amber-200 focus:bg-white rounded-2xl outline-none transition-all font-medium text-slate-700"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-amber-500 transition-colors"
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider ml-1">Senha</label>
+              <div className="relative">
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full pl-12 pr-12 py-4 bg-slate-50 border-2 border-transparent focus:border-amber-200 focus:bg-white rounded-2xl outline-none transition-all font-medium text-slate-700"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-amber-500 transition-colors"
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between px-1 pt-1">
+              <label className="flex items-center gap-2 cursor-pointer group">
+                <input type="checkbox" className="w-4 h-4 rounded border-slate-200 text-amber-500 focus:ring-amber-500" />
+                <span className="text-xs text-slate-400 group-hover:text-slate-600 transition-colors">Lembrar de mim</span>
+              </label>
+              <button 
+                type="button" 
+                onClick={handleForgotPassword}
+                className="text-xs text-amber-600 font-bold hover:underline"
               >
-                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                Esqueceu a senha?
               </button>
             </div>
-          </div>
 
-          <div className="flex items-center justify-between px-1 pt-1">
-            <label className="flex items-center gap-2 cursor-pointer group">
-              <input type="checkbox" className="w-4 h-4 rounded border-slate-200 text-amber-500 focus:ring-amber-500" />
-              <span className="text-xs text-slate-400 group-hover:text-slate-600 transition-colors">Lembrar de mim</span>
-            </label>
-            <button type="button" className="text-xs text-amber-600 font-bold hover:underline">Esqueceu a senha?</button>
-          </div>
+            <AnimatePresence>
+              {error && (
+                <motion.div 
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="bg-red-50 text-red-500 text-xs font-bold p-3 rounded-xl flex items-center gap-2"
+                >
+                  <AlertCircle className="w-4 h-4" />
+                  {error}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-          <AnimatePresence>
-            {error && (
-              <motion.div 
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                className="bg-red-50 text-red-500 text-xs font-bold p-3 rounded-xl flex items-center gap-2"
-              >
-                <AlertCircle className="w-4 h-4" />
-                {error}
-              </motion.div>
-            )}
-          </AnimatePresence>
+            <button
+              type="submit"
+              disabled={isLoggingIn}
+              className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-slate-100 disabled:text-slate-400 text-white py-4 rounded-2xl font-black shadow-lg shadow-amber-200 transition-all duration-300 flex items-center justify-center gap-2 mt-4"
+            >
+              {isLoggingIn ? (
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                >
+                  <div className="w-5 h-5 rounded-full border-2 border-white border-t-transparent" />
+                </motion.div>
+              ) : (
+                <>
+                  Entrar no Sistema
+                  <ChevronRight className="w-5 h-5" />
+                </>
+              )}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleAdminLogin} className="space-y-4 text-left">
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider ml-1">Usuário Admin</label>
+              <div className="relative">
+                <Shield className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+                <input
+                  type="text"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="admin"
+                  className="w-full pl-12 pr-4 py-4 bg-slate-50 border-2 border-transparent focus:border-amber-200 focus:bg-white rounded-2xl outline-none transition-all font-medium text-slate-700"
+                />
+              </div>
+            </div>
 
-          <button
-            type="submit"
-            disabled={isLoggingIn}
-            className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-slate-100 disabled:text-slate-400 text-white py-4 rounded-2xl font-black shadow-lg shadow-amber-200 transition-all duration-300 flex items-center justify-center gap-2 mt-4"
-          >
-            {isLoggingIn ? (
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-              >
-                <div className="w-5 h-5 rounded-full border-2 border-white border-t-transparent" />
-              </motion.div>
-            ) : (
-              <>
-                Entrar no Sistema
-                <ChevronRight className="w-5 h-5" />
-              </>
-            )}
-          </button>
-        </form>
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-black text-slate-400 uppercase tracking-wider ml-1">Senha</label>
+              <div className="relative">
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full pl-12 pr-12 py-4 bg-slate-50 border-2 border-transparent focus:border-amber-200 focus:bg-white rounded-2xl outline-none transition-all font-medium text-slate-700"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 hover:text-amber-500 transition-colors"
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
+            </div>
+
+            <AnimatePresence>
+              {error && (
+                <motion.div 
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="bg-red-50 text-red-500 text-xs font-bold p-3 rounded-xl flex items-center gap-2"
+                >
+                  <AlertCircle className="w-4 h-4" />
+                  {error}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <button
+              type="submit"
+              disabled={isLoggingIn}
+              className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-100 disabled:text-slate-400 text-white py-4 rounded-2xl font-black shadow-lg transition-all duration-300 flex items-center justify-center gap-2 mt-4"
+            >
+              {isLoggingIn ? (
+                <div className="w-5 h-5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+              ) : (
+                <>
+                  Entrar como Admin
+                  <ChevronRight className="w-5 h-5" />
+                </>
+              )}
+            </button>
+          </form>
+        )}
       </motion.div>
     </div>
   );
